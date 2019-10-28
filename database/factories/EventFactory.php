@@ -7,6 +7,7 @@ use Faker\Generator as Faker;
 
 $factory->define(Event::class, function (Faker $faker) {
     return [
-        'event' => $faker->sentence,
+        'event'    => $faker->sentence,
+        'deadline' => $faker->randomElement([0, 0, 1]) ? \Carbon\Carbon::now()->addDay()->toDateString() : null,
     ];
 });

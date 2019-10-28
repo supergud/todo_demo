@@ -1,6 +1,6 @@
 <?php
 
-namespace App;
+namespace App\Models;
 
 use Illuminate\Contracts\Auth\MustVerifyEmail;
 use Illuminate\Foundation\Auth\User as Authenticatable;
@@ -18,4 +18,12 @@ class User extends Authenticatable
     protected $fillable = [
         'uid',
     ];
+
+    /**
+     *  relationship definitions
+     */
+    public function events()
+    {
+        return $this->hasMany(Event::class);
+    }
 }
