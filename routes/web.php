@@ -16,3 +16,6 @@ Route::get('/', function () {
 });
 
 Route::post('/webhook', 'LineController@webhook')->name('webhook');
+
+Route::get('/liff/create', 'LiffController@create')->name('liff.create');
+Route::get('/liff/edit', 'LiffController@edit')->name('liff.edit');

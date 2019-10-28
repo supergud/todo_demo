@@ -4,26 +4,18 @@ namespace App\Http\Controllers;
 
 use App\Models\Event;
 use App\Models\User;
-use Carbon\Carbon;
 use Illuminate\Http\Request;
 use Illuminate\Support\Facades\Log;
-use LINE\LINEBot\Constant\Flex\ComponentButtonStyle;
-use LINE\LINEBot\Constant\Flex\ComponentLayout;
 use LINE\LINEBot\Event\FollowEvent;
 use LINE\LINEBot\Event\MessageEvent;
 use LINE\LINEBot\Event\PostbackEvent;
 use LINE\LINEBot\Event\UnfollowEvent;
-use LINE\LINEBot\MessageBuilder\Flex\ComponentBuilder\BoxComponentBuilder;
-use LINE\LINEBot\MessageBuilder\Flex\ComponentBuilder\ButtonComponentBuilder;
-use LINE\LINEBot\MessageBuilder\Flex\ComponentBuilder\ImageComponentBuilder;
-use LINE\LINEBot\MessageBuilder\Flex\ComponentBuilder\TextComponentBuilder;
-use LINE\LINEBot\MessageBuilder\Flex\ContainerBuilder\BubbleContainerBuilder;
-use LINE\LINEBot\MessageBuilder\FlexMessageBuilder;
 use LINE\LINEBot\MessageBuilder\TemplateBuilder\CarouselColumnTemplateBuilder;
 use LINE\LINEBot\MessageBuilder\TemplateBuilder\CarouselTemplateBuilder;
 use LINE\LINEBot\MessageBuilder\TemplateMessageBuilder;
 use LINE\LINEBot\MessageBuilder\TextMessageBuilder;
 use LINE\LINEBot\TemplateActionBuilder\PostbackTemplateActionBuilder;
+use LINE\LINEBot\TemplateActionBuilder\UriTemplateActionBuilder;
 
 class LineController extends Controller
 {
@@ -66,16 +58,14 @@ class LineController extends Controller
 
                 $user->save();
             } elseif ($event instanceof UnfollowEvent) {
-                $users = User::query()->where('uid', $line_user_id);
+                $users = User::query()
+                    ->where('uid', $line_user_id)
+                    ->get();
+
+                Log::info(json_encode($users));
 
                 foreach ($users as $user) {
-                    try{
-                        $user->events->delete();
-
-                        $user->delete();
-                    } catch (\Exception $e) {
-                        $bot->replyMessage($event->getReplyToken(), new TextMessageBuilder('系統發生錯誤'));
-                    }
+                    $user->delete();
                 }
             } elseif ($event instanceof MessageEvent) {
                 $message_type = $event->getMessageType();
@@ -92,39 +82,77 @@ class LineController extends Controller
 
                 switch ($message_type) {
                     case 'text':
-                        $text = $event->getText();
+                        $text = explode('@', $event->getText());
 
-                        switch ($text) {
+                        $action = $text[0];
+                        $data   = json_decode($text[1] ?? '{}');
+
+                        switch ($action) {
                             case '待辦清單':
                                 $user_events = $user->events;
 
-                                $carousels = [];
+                                if ($user_events->count()) {
+                                    $carousels = [];
 
-                                foreach ($user_events as $user_event) {
-                                    $column = new CarouselColumnTemplateBuilder(null, $user_event->event, null, [
-                                        new PostbackTemplateActionBuilder('編輯', json_encode([
-                                            'action'   => 'edit',
-                                            'event_id' => $user_event->id,
-                                        ])),
-                                        new PostbackTemplateActionBuilder('完成', json_encode([
-                                            'action'   => 'done',
-                                            'event_id' => $user_event->id,
-                                        ])),
-                                    ]);
+                                    foreach ($user_events as $user_event) {
+                                        $column = new CarouselColumnTemplateBuilder(null, $user_event->event, null, [
+                                            new UriTemplateActionBuilder('編輯', 'line://app/1627654560-O93NjxGV?event_id=' . $user_event->id),
+                                            new PostbackTemplateActionBuilder('完成', json_encode([
+                                                'action'   => 'done',
+                                                'event_id' => $user_event->id,
+                                            ])),
+                                        ]);
 
-                                    $carousels[] = $column;
+                                        $carousels[] = $column;
+                                    }
+
+                                    $carousel_message = new CarouselTemplateBuilder($carousels);
+
+                                    $text_message = new TemplateMessageBuilder('待辦清單', $carousel_message);
+                                } else {
+                                    $text_message = new TextMessageBuilder('目前沒有待辦事項');
                                 }
-
-                                $carousel_message = new CarouselTemplateBuilder($carousels);
-
-                                $text_message = new TemplateMessageBuilder('待辦清單', $carousel_message);
 
                                 $bot->replyMessage($event->getReplyToken(), $text_message);
 
                                 break;
 
+                            case '新增':
+                                $new_event = new Event;
+
+                                $new_event->event    = $data->event;
+                                $new_event->deadline = $data->deadline ?: null;
+                                $new_event->user_id  = $user->id;
+
+                                $new_event->save();
+
+                                $text_message = new TextMessageBuilder("新增待辦事項成功：\n" . $new_event->event);
+
+                                $bot->replyMessage($event->getReplyToken(), $text_message);
+                                break;
+
+                            case '編輯':
+                                $old_event = Event::query()->where('id', $data->event_id)->first();
+
+                                if (!$old_event) {
+                                    $text_message = new TextMessageBuilder("編輯待辦事項失敗");
+
+                                    $bot->replyMessage($event->getReplyToken(), $text_message);
+                                } else {
+                                    $old_event->event    = $data->event;
+                                    $old_event->deadline = $data->deadline ?: null;
+
+                                    $old_event->save();
+
+                                    $text_message = new TextMessageBuilder("編輯待辦事項成功：\n" . $old_event->event);
+
+                                    $bot->replyMessage($event->getReplyToken(), $text_message);
+                                }
+
+                                break;
+
                             default:
-                                $text_message = new TextMessageBuilder($text);
+                                $text_message = new TextMessageBuilder($action);
 
                                 $bot->replyMessage($event->getReplyToken(), $text_message);
 
@@ -148,7 +176,7 @@ class LineController extends Controller
                             $title = $user_event->event;
                             $user_event->delete();
 
-                            $bot->replyMessage($event->getReplyToken(), new TextMessageBuilder($title . ' 待辦事項已完成'));
+                            $bot->replyMessage($event->getReplyToken(), new TextMessageBuilder("待辦事項已完成：\n" . $title));
                         } catch (\Exception $e) {
                             $bot->replyMessage($event->getReplyToken(), new TextMessageBuilder('系統發生錯誤'));
                         }
@@ -165,7 +193,6 @@ class LineController extends Controller
 
         return response()->json([
             'state'   => true,
-            'message' => $text_message,
         ]);
     }
 }
